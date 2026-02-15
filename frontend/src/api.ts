@@ -95,3 +95,29 @@ export async function getClips(ids: string[]): Promise<Clip[]> {
 
   return (await res.json()) as Clip[];
 }
+
+export async function separateStems(clipId: string): Promise<Clip[]> {
+  const res = await fetch(`${BASE_URL}stem`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ clip_id: clipId }),
+  });
+
+  if (!res.ok) {
+    let detail: string | undefined;
+    try {
+      const json = (await res.json()) as { detail?: string };
+      detail = json.detail;
+    } catch {
+      detail = res.statusText;
+    }
+    if (res.status === 401) throw new SunoApiError('Invalid API key', 401, detail);
+    if (res.status === 403) throw new SunoApiError('Access denied', 403, detail);
+    if (res.status === 429) throw new SunoApiError('Stem separation rate limit exceeded. Please wait.', 429, detail);
+    if (res.status === 400) throw new SunoApiError(detail ?? 'Bad request', 400, detail);
+    throw new SunoApiError(detail ?? `Request failed (${res.status})`, res.status, detail);
+  }
+
+  const data = (await res.json()) as Clip[];
+  return Array.isArray(data) ? data : [];
+}

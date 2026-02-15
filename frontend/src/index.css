@@ -1,5 +1,127 @@
+@import "tailwindcss";
+
+.font-instrument-sans {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 8px;
+}
+
+.font-instrument-serif {
+  font-family: 'Instrument Serif', Georgia, serif;
+}
+
+/* Scrollable comments */
+.comments-list {
+  scrollbar-width: thin;
+}
+.comments-list::-webkit-scrollbar {
+  width: 6px;
+}
+.comments-list::-webkit-scrollbar-thumb {
+  background: rgba(26, 25, 43, 0.3);
+  border-radius: 3px;
+}
+
+/* Moving gradient hover effect */
+.gradient-hover,
+.gradient-active {
+  position: relative;
+  overflow: hidden;
+}
+
+.gradient-active::before,
+.gradient-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.gradient-active::before {
+  background: linear-gradient(
+    110deg,
+    #c76b4a 0%,
+    #e07c5c 25%,
+    #9b7ede 50%,
+    #b8a9e0 75%,
+    #c76b4a 100%
+  );
+  background-size: 300% 300%;
+}
+
+.gradient-active::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+  background-size: 100px 100px;
+  mix-blend-mode: overlay;
+  z-index: 1;
+}
+
+.gradient-active > * {
+  position: relative;
+  z-index: 10;
+}
+
+.gradient-hover::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    #c76b4a 0%,
+    #e07c5c 25%,
+    #9b7ede 50%,
+    #b8a9e0 75%,
+    #c76b4a 100%
+  );
+  background-size: 300% 300%;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 0;
+}
+
+.gradient-hover:hover::before,
+.gradient-hover:disabled::before,
+.gradient-active::before {
+  opacity: 1;
+  animation: gradient-move 3s ease infinite;
+}
+
+.gradient-hover > * {
+  position: relative;
+  z-index: 10;
+}
+
+@keyframes gradient-move {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Speckled texture overlay */
+.gradient-hover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+  background-size: 100px 100px;
+  opacity: 0;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+
+.gradient-hover:hover::after,
+.gradient-hover:disabled::after,
+.gradient-active::after {
+  opacity: 0.2;
+}
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Instrument Serif', Georgia, serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -35,24 +157,7 @@ h1 {
   line-height: 1.1;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
+
 
 @media (prefers-color-scheme: light) {
   :root {
@@ -61,8 +166,5 @@ button:focus-visible {
   }
   a:hover {
     color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
   }
 }
