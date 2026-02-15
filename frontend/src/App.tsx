@@ -17,6 +17,7 @@ import '@xyflow/react/dist/style.css';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { generate, getClips, separateStems, SunoApiError, type Clip, type GenerateBody } from './api';
 import { addComment, fetchComments, type Comment } from './comments';
+import { refineMusicPrompt } from './openai';
 
 type ParamValue = string | boolean;
 
@@ -51,6 +52,126 @@ function useFlowContext(): FlowContextValue {
 const POLL_INTERVAL_MS = 5000;
 
 const FRIEND_NAMES = ['Thu', 'Yerkem', 'Rawan'] as const;
+
+const DEFAULT_GRADIENT_COLORS = ['#fce4ec', '#f8bbd9', '#e1bee7', '#b2dfdb', '#b2ebf2', '#c8e6c9'];
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return '#' + [r, g, b].map((x) => Math.min(255, Math.max(0, x)).toString(16).padStart(2, '0')).join('');
+}
+
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        break;
+      case g:
+        h = ((b - r) / d + 2) / 6;
+        break;
+      default:
+        h = ((r - g) / d + 4) / 6;
+    }
+  }
+  return [h * 360, s * 100, l * 100];
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  h /= 360;
+  s /= 100;
+  l /= 100;
+  let r: number;
+  let g: number;
+  let b: number;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function lightenForGradient(hex: string, amount = 0.25): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const [h, s, l] = rgbToHsl(r, g, b);
+  const newL = Math.min(95, l + amount * 100);
+  const newS = Math.min(60, s * 1.2);
+  const [nr, ng, nb] = hslToRgb(h, newS, newL);
+  return rgbToHex(nr, ng, nb);
+}
+
+function extractColorsFromImage(imageUrl: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const size = 50;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(DEFAULT_GRADIENT_COLORS);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, size, size);
+        const data = ctx.getImageData(0, 0, size, size).data;
+        const colorCounts: Record<string, number> = {};
+        for (let i = 0; i < data.length; i += 12) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+          if (a < 128) continue;
+          const [, , l] = rgbToHsl(r, g, b);
+          if (l < 15 || l > 92) continue;
+          const key = `${Math.round(r / 24) * 24},${Math.round(g / 24) * 24},${Math.round(b / 24) * 24}`;
+          colorCounts[key] = (colorCounts[key] ?? 0) + 1;
+        }
+        const sorted = Object.entries(colorCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([key]) => {
+            const [r, g, b] = key.split(',').map(Number);
+            return lightenForGradient(rgbToHex(r, g, b));
+          });
+        if (sorted.length >= 3) {
+          resolve(sorted);
+        } else {
+          resolve(DEFAULT_GRADIENT_COLORS);
+        }
+      } catch {
+        resolve(DEFAULT_GRADIENT_COLORS);
+      }
+    };
+    img.onerror = () => resolve(DEFAULT_GRADIENT_COLORS);
+    img.src = imageUrl;
+  });
+}
 const AUTHOR_STORAGE_KEY = 'mixtape-comment-author';
 
 const PARAM_CONFIG: Record<string, { label: string; placeholder: string }> = {
@@ -58,6 +179,10 @@ const PARAM_CONFIG: Record<string, { label: string; placeholder: string }> = {
   tags: { label: 'Tags', placeholder: 'e.g. rock, electric guitar, anthem' },
   prompt: { label: 'Custom lyrics', placeholder: '[Verse]\\nYour lyrics here...' },
   instrumental: { label: 'Instrumental only', placeholder: '' },
+  aiPrompt: {
+    label: 'Prompt',
+    placeholder: 'e.g. chill vibes, something for studying, upbeat workout music',
+  },
 };
 
 const nodeBaseClasses = 'p-3 rounded-lg bg-white border border-[#1a192b] min-w-[200px]';
@@ -73,21 +198,38 @@ function ParamNode({ id, data, type }: NodeProps<Node<ParamData>>) {
   const config = PARAM_CONFIG[paramType] ?? { label: paramType, placeholder: '' };
   const { setNodes } = useFlowContext();
   const isInstrumental = paramType === 'instrumental';
+  const isAiPrompt = paramType === 'aiPrompt';
   const value = (data as ParamData).value;
   const textValue = typeof value === 'string' ? value : '';
   const boolValue = typeof value === 'boolean' ? value : false;
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const minRows = paramType === 'prompt' ? 3 : 1;
+  const minRows = paramType === 'prompt' ? 3 : paramType === 'aiPrompt' ? 2 : 1;
 
   const handleChange = useCallback(
     (newValue: ParamValue) => {
       setNodes((prev) =>
         prev.map((n) => (n.id === id ? { ...n, data: { ...n.data, value: newValue } } : n))
       );
+      setRefineError(null);
     },
     [id, setNodes]
   );
+
+  const handleRefine = useCallback(async () => {
+    setRefining(true);
+    setRefineError(null);
+    try {
+      const refined = await refineMusicPrompt(textValue);
+      handleChange(refined);
+    } catch (e) {
+      setRefineError(e instanceof Error ? e.message : 'Failed to refine prompt');
+    } finally {
+      setRefining(false);
+    }
+  }, [textValue, handleChange]);
 
   useEffect(() => {
     if (isInstrumental) return;
@@ -130,6 +272,21 @@ function ParamNode({ id, data, type }: NodeProps<Node<ParamData>>) {
         className="w-full py-1.5 text-[13px] border-0 outline-none bg-transparent resize-none overflow-hidden box-border font-instrument-sans"
         aria-label={config.label}
       />
+      {isAiPrompt && (
+        <>
+          {refineError && (
+            <div className="text-xs text-red-600 mt-1 font-instrument-sans">{refineError}</div>
+          )}
+          <button
+            type="button"
+            onClick={handleRefine}
+            disabled={refining}
+            className="mt-2 text-[12px] font-instrument-serif text-[#1a192b] underline cursor-pointer hover:no-underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+          >
+            {refining ? 'Refining...' : 'Refine with AI'}
+          </button>
+        </>
+      )}
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
@@ -159,6 +316,57 @@ function SongNode({ id, data }: NodeProps<Node<SongData>>) {
   const [stemsLoading, setStemsLoading] = useState(false);
   const [stemsError, setStemsError] = useState<string | null>(null);
   const [stemsExpanded, setStemsExpanded] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [gradientColors, setGradientColors] = useState<string[]>(DEFAULT_GRADIENT_COLORS);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!d.imageUrl) return;
+    extractColorsFromImage(d.imageUrl).then(setGradientColors);
+  }, [d.imageUrl]);
+
+  useEffect(() => {
+    if (!isPlaying || !cardRef.current) return;
+    const card = cardRef.current;
+    let rafId: number;
+    let phase = 0;
+    let lastTime = 0;
+
+    const update = (timestamp: number) => {
+      const dt = lastTime ? (timestamp - lastTime) / 1000 : 0.016;
+      lastTime = timestamp;
+      phase += dt * 1.2;
+      if (phase > 1) phase -= 1;
+      const x = Math.round(50 + 50 * Math.sin(phase * Math.PI * 2));
+      const y = Math.round(50 + 50 * Math.cos(phase * Math.PI * 2));
+      card.style.backgroundPosition = `${x}% ${y}%`;
+      rafId = requestAnimationFrame(update);
+    };
+    rafId = requestAnimationFrame(update);
+    return () => {
+      cancelAnimationFrame(rafId);
+      card.style.background = '';
+      card.style.backgroundSize = '';
+      card.style.backgroundPosition = '';
+    };
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!isPlaying || !cardRef.current) return;
+    const card = cardRef.current;
+    const stops = gradientColors
+      .map((c, i) => `${c} ${Math.round((i / Math.max(1, gradientColors.length - 1)) * 100)}%`)
+      .join(', ');
+    card.style.background = `linear-gradient(135deg, ${stops})`;
+    card.style.backgroundSize = '200% 200%';
+    return () => {
+      if (cardRef.current) {
+        cardRef.current.style.background = '';
+        cardRef.current.style.backgroundSize = '';
+      }
+    };
+  }, [isPlaying, gradientColors]);
 
   const handleAuthorChange = useCallback((name: string) => {
     setAuthorName(name);
@@ -253,13 +461,14 @@ function SongNode({ id, data }: NodeProps<Node<SongData>>) {
       const val = paramData?.value;
       const nodeType = node.type as string;
       if (nodeType === 'topic' && typeof val === 'string' && val.trim()) body.topic = val.trim();
+      if (nodeType === 'aiPrompt' && typeof val === 'string' && val.trim()) body.topic = val.trim();
       if (nodeType === 'tags' && typeof val === 'string' && val.trim()) body.tags = val.trim();
       if (nodeType === 'prompt' && typeof val === 'string' && val.trim()) body.prompt = val.trim();
       if (nodeType === 'instrumental' && val === true) body.make_instrumental = true;
     }
 
     if (!body.topic && !body.prompt) {
-      setCreateError('Connect a Topic or Custom lyrics node and enter a value');
+      setCreateError('Connect a Topic, Prompt, or Custom lyrics node and enter a value');
       return;
     }
 
@@ -399,13 +608,27 @@ function SongNode({ id, data }: NodeProps<Node<SongData>>) {
   }
 
   return (
-    <div className="p-3 rounded-lg bg-white border border-[#1a192b] min-w-[280px]">
+    <div
+      ref={cardRef}
+      className={`p-3 rounded-lg border border-[#1a192b] min-w-[280px] transition-colors duration-500 ${
+        isPlaying ? 'song-card-playing' : 'bg-white'
+      }`}
+    >
       <Handle type="target" position={Position.Top} />
       {d.imageUrl && (
         <img src={d.imageUrl} alt="" className="w-full rounded-md mb-2 max-h-[120px] object-cover" />
       )}
       <div className="text-sm font-bold mb-2">{d.title || 'Untitled'}</div>
-      <audio src={d.audioUrl} controls className="w-full h-9 mb-2" aria-label="Play generated song" />
+      <audio
+        ref={audioRef}
+        src={d.audioUrl}
+        controls
+        className="w-full h-9 mb-2"
+        aria-label="Play generated song"
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+      />
       <button onClick={handleCreate} disabled={isGenerating} className={btnPrimaryClasses}>
         <span className="relative z-10">{isGenerating ? 'Generating...' : 'Recreate'}</span>
       </button>
@@ -529,6 +752,7 @@ const nodeTypes = {
   tags: ParamNode,
   prompt: ParamNode,
   instrumental: ParamNode,
+  aiPrompt: ParamNode,
   song: SongNode,
 };
 
@@ -555,7 +779,7 @@ function FlowWithContext() {
   const onConnect = useCallback((params: Connection) => setEdges((prev) => addEdge(params, prev)), []);
 
   const addParamNode = useCallback(
-    (type: 'topic' | 'tags' | 'prompt' | 'instrumental') => {
+    (type: 'topic' | 'tags' | 'prompt' | 'instrumental' | 'aiPrompt') => {
       const id = `${type}-${Date.now()}`;
       const lastOfType = nodes.filter((n) => n.type === type).pop();
       const baseY = lastOfType?.position.y ?? 0;
@@ -598,6 +822,9 @@ function FlowWithContext() {
         <Panel position="top-left" className="flex gap-2 m-2.5">
           <button onClick={() => addParamNode('topic')} className={panelBtnClasses}>
             <span className="relative z-10">+ Topic</span>
+          </button>
+          <button onClick={() => addParamNode('aiPrompt')} className={panelBtnClasses}>
+            <span className="relative z-10">+ Prompt</span>
           </button>
           <button onClick={() => addParamNode('tags')} className={panelBtnClasses}>
             <span className="relative z-10">+ Tags</span>

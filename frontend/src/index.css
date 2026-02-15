@@ -9,6 +9,20 @@
   font-family: 'Instrument Serif', Georgia, serif;
 }
 
+/* Song card gradient when playing - position driven by audio rhythm via JS */
+.song-card-playing {
+  background: linear-gradient(
+    135deg,
+    #fce4ec 0%,
+    #f8bbd9 20%,
+    #e1bee7 40%,
+    #b2dfdb 60%,
+    #b2ebf2 80%,
+    #c8e6c9 100%
+  );
+  background-size: 200% 200%;
+}
+
 /* Scrollable comments */
 .comments-list {
   scrollbar-width: thin;
